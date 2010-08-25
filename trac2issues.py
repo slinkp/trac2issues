@@ -20,10 +20,37 @@ parser.add_option('-m', '--milestone', action="store_true", default=False, dest=
 parser.add_option('-o', '--owner', action="store_true", default=False, dest='owner', help='Create a label for the Trac owner.')
 parser.add_option('-r', '--reporter', action="store_true", default=False, dest='reporter', help='Add a comment naming the reporter.')
 parser.add_option('-u', '--url', dest='url', help='The base URL for the trac install (will also link to the old ticket in a comment).')
+parser.add_option('-g', '--org', dest='organization', help='organization (optional)')
 
 (options, args) = parser.parse_args(sys.argv[1:])
 
 
+# Monkeypatch urllib2 to not treat HTTP 20x as an error.
+# Is there a better way to do this?
+def _non_stupid_http_response(self, request, response):
+    code, msg, hdrs = response.code, response.msg, response.info()
+    if code < 200 or code > 206:
+        response = self.parent.error(
+            'http', request, response, code, msg, hdrs)
+    return response
+
+urllib2.HTTPErrorProcessor.http_response = _non_stupid_http_response
+urllib2.HTTPErrorProcessor.https_response = _non_stupid_http_response
+
+def urlopen(*args, **kw):
+    # As per http://develop.github.com/p/general.html
+    # they're limiting to 60 calls per minute.
+    # So, wait a minute.
+    try:
+        return urllib2.urlopen(*args, **kw)
+    except urllib2.HTTPError, e:
+        if e.code == 403:
+            print bold('Permission denied, waiting 60 seconds and trying again once...')
+            import time
+            time.sleep(61)
+            return urllib2.urlopen(*args, **kw)
+        else:
+            raise
 
 
 class ImportTickets:
@@ -47,13 +74,15 @@ class ImportTickets:
         self.labelOwner = options.owner
         self.labelReporter = options.reporter
         self.useURL = False
+        self.organization = options.organization
 
         if options.url:
             self.useURL = "%s/ticket/" % options.url
 
-        
         self.ghAuth()
-        
+
+        self.projectPath = '%s/%s' % (self.organization or self.login, self.project)
+
         self.checkProject()
 
         if self.useURL:
@@ -66,11 +95,12 @@ class ImportTickets:
         ##We own this project..
         self._fetchTickets()
 
+
     def checkProject(self):
-        url = "%s/repos/show/%s/%s" % (self.github, self.login, self.project)
+        url = "%s/repos/show/%s" % (self.github, self.projectPath)
         data = simplejson.load(urllib.urlopen(url))
         if 'error' in data:
-            print_error("%s/%s: %s" % (self.login, self.project, data['error'][0]['error']))
+            print_error("%s: %s" % (self.projectPath, data['error'][0]['error']))
         
 
     def ghAuth(self):
@@ -92,11 +122,11 @@ class ImportTickets:
         if self.includeClosed:
             where = ""
 
-        sql = "select id, summary, description, milestone, component, reporter, owner from ticket %s order by id" % where
+        sql = "select id, summary, description, milestone, component, reporter, owner, status from ticket %s order by id" % where
         cursor.execute(sql)
         # iterate through resultset
         tickets = []
-        for id, summary, description, milestone, component, reporter, owner in cursor:
+        for id, summary, description, milestone, component, reporter, owner, status in cursor:
             if milestone:
                 milestone = milestone.replace(' ', '_')
             if component:
@@ -114,7 +144,8 @@ class ImportTickets:
                 'component': component,
                 'reporter': reporter,
                 'owner': owner,
-                'history': []
+                'history': [],
+                'status': status,
             }
             cursor2 = self.db.cursor()        
             sql = 'select author, time, newvalue from ticket_change where (ticket = %s) and (field = "comment")' % id
@@ -129,7 +160,7 @@ class ImportTickets:
 
             tickets.append(ticket)
 
-        print bold('About to import (%s) tickets from Trac to %s/%s.\n%s? [y/N]' % (len(tickets), self.login, self.project, red('Are you sure you wish to continue')))
+        print bold('About to import (%s) tickets from Trac to %s.\n%s? [y/N]' % (len(tickets), self.projectPath, red('Are you sure you wish to continue')))
         go = sys.stdin.readline().strip().lower()
 
         if go[0:1] != 'y':
@@ -140,9 +171,9 @@ class ImportTickets:
         for data in tickets:
             self.createIssue(data)
 
-        
+
     def createIssue(self, info):
-        print bold('Creating issue.')
+        print bold('Creating issue from ticket %s' % info['id'])
         out = {
             'login': self.login,
             'token': self.token,
@@ -151,9 +182,9 @@ class ImportTickets:
         }
         data = urllib.urlencode(out)
 
-        url = "%s/issues/open/%s/%s" % (self.github, self.login, self.project)
+        url = "%s/issues/open/%s" % (self.github, self.projectPath)
         req = urllib2.Request(url, data)
-        response = urllib2.urlopen(req)
+        response = urlopen(req)
         ticket_data = simplejson.load(response)
 
         if 'number' in ticket_data['issue']:
@@ -189,23 +220,26 @@ class ImportTickets:
         if self.useURL:
             comment = "Ticket imported from Trac:\n %s%s" % (self.useURL, info['id'])
             self.addComment(num, comment)
+
+        if info.get('status') == 'closed':
+            self.closeIssue(num)
             
 
     def createLabel(self, num, name):
         print bold("\tAdding label %s to issue # %s" % (name, num))
-        url = "%s/issues/label/add/%s/%s/%s/%s" % (self.github, self.login, self.project, name, num)
+        url = "%s/issues/label/add/%s/%s/%s" % (self.github, self.projectPath, name, num)
         out = {
             'login': self.login,
             'token': self.token
         }
         data = urllib.urlencode(out)
         req = urllib2.Request(url, data)
-        response = urllib2.urlopen(req)
+        response = urlopen(req)
         label_data = simplejson.load(response)
         
     def addComment(self, num, comment):
         print bold("\tAdding comment to issue # %s" % num)
-        url = "%s/issues/comment/%s/%s/%s" % (self.github, self.login, self.project, num)
+        url = "%s/issues/comment/%s/%s" % (self.github, self.projectPath, num)
         out = {
             'login': self.login,
             'token': self.token,
@@ -213,8 +247,19 @@ class ImportTickets:
         }
         data = urllib.urlencode(out)
         req = urllib2.Request(url, data)
-        response = urllib2.urlopen(req)
-        
+        response = urlopen(req)
+
+    def closeIssue(self, num):
+        print bold("\tClosing issue # %s" %  num)
+        url = "%s/issues/close/%s/%s" % (self.github, self.projectPath, num)
+        out = {
+            'login': self.login,
+            'token': self.token
+        }
+        data = urllib.urlencode(out)
+        req = urllib2.Request(url, data)
+        response = urlopen(req)
+        close_data = simplejson.load(response)
         
 
 ##Format bold text
