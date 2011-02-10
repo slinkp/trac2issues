@@ -13,6 +13,7 @@ pp = pprint.PrettyPrinter(indent=4)
 
 parser = OptionParser()
 parser.add_option('-t', '--trac', dest='trac', help='Path to the Trac project to export.')
+parser.add_option('-a', '--account', dest='account', help='Name of the GitHub Account to import into.')
 parser.add_option('-p', '--project', dest='project', help='Name of the GitHub Project to import into.')
 parser.add_option('-x', '--closed', action="store_true", default=False, dest='closed', help='Include closed tickets.')
 parser.add_option('-c', '--component', action="store_true", default=False, dest='component', help='Create a label for the Trac component.')
@@ -28,9 +29,10 @@ parser.add_option('-u', '--url', dest='url', help='The base URL for the trac ins
 
 class ImportTickets:
 
-    def __init__(self, trac=options.trac, project=options.project):
+    def __init__(self, trac=options.trac, account=options.account, project=options.project):
         self.env = open_environment(trac)
         self.trac = trac
+        self.account = account
         self.project = project
         self.now = datetime.now(utc)
         #Convert the timestamp from a float to an int to drop the .0
@@ -67,10 +69,11 @@ class ImportTickets:
         self._fetchTickets()
 
     def checkProject(self):
-        url = "%s/repos/show/%s/%s" % (self.github, self.login, self.project)
+        url = "%s/repos/show/%s/%s" % (self.github, self.account, self.project)
         data = simplejson.load(urllib.urlopen(url))
+        time.sleep(1)
         if 'error' in data:
-            print_error("%s/%s: %s" % (self.login, self.project, data['error'][0]['error']))
+            print_error("%s/%s: %s" % (self.account, self.project, data['error'][0]['error']))
         
 
     def ghAuth(self):
@@ -92,11 +95,11 @@ class ImportTickets:
         if self.includeClosed:
             where = ""
 
-        sql = "select id, summary, description, milestone, component, reporter, owner from ticket %s order by id" % where
+        sql = "select id, summary, status, description, milestone, component, reporter, owner from ticket %s order by id" % where
         cursor.execute(sql)
         # iterate through resultset
         tickets = []
-        for id, summary, description, milestone, component, reporter, owner in cursor:
+        for id, summary, status, description, milestone, component, reporter, owner in cursor:
             if milestone:
                 milestone = milestone.replace(' ', '_')
             if component:
@@ -109,6 +112,7 @@ class ImportTickets:
             ticket = {
                 'id': id,
                 'summary': summary,
+                'status': status,
                 'description': description,
                 'milestone': milestone,
                 'component': component,
@@ -129,7 +133,7 @@ class ImportTickets:
 
             tickets.append(ticket)
 
-        print bold('About to import (%s) tickets from Trac to %s/%s.\n%s? [y/N]' % (len(tickets), self.login, self.project, red('Are you sure you wish to continue')))
+        print bold('About to import (%s) tickets from Trac to %s/%s.\n%s? [y/N]' % (len(tickets), self.account, self.project, red('Are you sure you wish to continue')))
         go = sys.stdin.readline().strip().lower()
 
         if go[0:1] != 'y':
@@ -149,11 +153,12 @@ class ImportTickets:
             'title': info['summary'],
             'body': info['description']
         }
-        data = urllib.urlencode(out)
+        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
 
-        url = "%s/issues/open/%s/%s" % (self.github, self.login, self.project)
+        url = "%s/issues/open/%s/%s" % (self.github, self.account, self.project)
         req = urllib2.Request(url, data)
         response = urllib2.urlopen(req)
+        time.sleep(1)
         ticket_data = simplejson.load(response)
 
         if 'number' in ticket_data['issue']:
@@ -163,12 +168,12 @@ class ImportTickets:
             print_error('GitHub didn\'t return an issue number :(')
 
         if self.labelMilestone and 'milestone' in info:
-            if info['milestone'] != None:
-                self.createLabel(num, "M:%s" % info['milestone'])
+            if info['milestone'] != None and info['milestone'] != '':
+                self.createLabel(num, "%s" % info['milestone'])
 
         if self.labelComponent and 'component' in info:
             if info['component'] != None:
-                self.createLabel(num, "C:%s" % info['component'])
+                self.createLabel(num, "C_%s" % info['component'])
 
         if self.labelOwner and 'owner' in info:
             if info['owner'] != None:
@@ -190,31 +195,39 @@ class ImportTickets:
             comment = "Ticket imported from Trac:\n %s%s" % (self.useURL, info['id'])
             self.addComment(num, comment)
             
+        if info['status'] == 'closed':
+            print bold('Closing issue #%s.' % num)
+            url = "%s/issues/close/%s/%s/%s" % (self.github, self.account, self.project, num)
+            req = urllib2.Request(url, data)
+            response = urllib2.urlopen(req)
+            time.sleep(1)
+
 
     def createLabel(self, num, name):
         print bold("\tAdding label %s to issue # %s" % (name, num))
-        url = "%s/issues/label/add/%s/%s/%s/%s" % (self.github, self.login, self.project, name, num)
+        url = "%s/issues/label/add/%s/%s/%s/%s" % (self.github, self.account, self.project, name, num)
         out = {
             'login': self.login,
             'token': self.token
         }
-        data = urllib.urlencode(out)
+        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
         req = urllib2.Request(url, data)
         response = urllib2.urlopen(req)
+        time.sleep(1)
         label_data = simplejson.load(response)
         
     def addComment(self, num, comment):
         print bold("\tAdding comment to issue # %s" % num)
-        url = "%s/issues/comment/%s/%s/%s" % (self.github, self.login, self.project, num)
+        url = "%s/issues/comment/%s/%s/%s" % (self.github, self.account, self.project, num)
         out = {
             'login': self.login,
             'token': self.token,
             'comment': comment
         }
-        data = urllib.urlencode(out)
+        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
         req = urllib2.Request(url, data)
         response = urllib2.urlopen(req)
-        
+        time.sleep(1)
         
 
 ##Format bold text
