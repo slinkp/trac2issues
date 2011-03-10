@@ -2,8 +2,8 @@
 
 ##Script to convert Trac Tickets to GitHub Issues
 
-import re, os, sys, time, math, simplejson
-import string, shutil, urllib2, urllib, pprint, simplejson, datetime
+import os, sys, time, math, simplejson
+import urllib2, urllib, pprint
 from datetime import datetime
 from optparse import OptionParser
 
@@ -46,7 +46,6 @@ def urlopen(*args, **kw):
     except urllib2.HTTPError, e:
         if e.code == 403:
             print bold('Permission denied, waiting 60 seconds and trying again once...')
-            import time
             time.sleep(61)
             return urllib2.urlopen(*args, **kw)
         else:
@@ -91,7 +90,7 @@ class ImportTickets:
 
             if go[0:1] != 'y':
                 print_error('Try Again..')
-            
+
         ##We own this project..
         self._fetchTickets()
 
@@ -101,7 +100,7 @@ class ImportTickets:
         data = simplejson.load(urllib.urlopen(url))
         if 'error' in data:
             print_error("%s: %s" % (self.projectPath, data['error'][0]['error']))
-        
+
 
     def ghAuth(self):
         login = os.popen('git config --global github.user').read().strip()
@@ -116,8 +115,8 @@ class ImportTickets:
         self.token = token
 
     def _fetchTickets(self):
-        cursor = self.db.cursor()        
-        
+        cursor = self.db.cursor()
+
         where = " where (status != 'closed') "
         if self.includeClosed:
             where = ""
@@ -135,7 +134,7 @@ class ImportTickets:
                 owner = owner.replace(' ', '_')
             if reporter:
                 reporter = reporter.replace(' ', '_')
-            
+
             ticket = {
                 'id': id,
                 'summary': summary,
@@ -147,7 +146,7 @@ class ImportTickets:
                 'history': [],
                 'status': status,
             }
-            cursor2 = self.db.cursor()        
+            cursor2 = self.db.cursor()
             sql = 'select author, time, newvalue from ticket_change where (ticket = %s) and (field = "comment")' % id
             cursor2.execute(sql)
             for author, time, newvalue in cursor2:
@@ -208,13 +207,13 @@ class ImportTickets:
         if self.labelReporter and 'reporter' in info:
             if info['reporter'] != None:
                 self.createLabel(num, "@@%s" % info['reporter'])
-        
+
         for i in info['history']:
             if i['author']:
                 comment = "Author: %s\n%s" % (i['author'], i['comment'])
             else:
                 comment = i['comment']
-                
+
             self.addComment(num, comment)
 
         if self.useURL:
@@ -223,7 +222,7 @@ class ImportTickets:
 
         if info.get('status') == 'closed':
             self.closeIssue(num)
-            
+
 
     def createLabel(self, num, name):
         print bold("\tAdding label %s to issue # %s" % (name, num))
@@ -236,7 +235,7 @@ class ImportTickets:
         req = urllib2.Request(url, data)
         response = urlopen(req)
         label_data = simplejson.load(response)
-        
+
     def addComment(self, num, comment):
         print bold("\tAdding comment to issue # %s" % num)
         url = "%s/issues/comment/%s/%s" % (self.github, self.projectPath, num)
@@ -260,7 +259,7 @@ class ImportTickets:
         req = urllib2.Request(url, data)
         response = urlopen(req)
         close_data = simplejson.load(response)
-        
+
 
 ##Format bold text
 def bold(str):
@@ -288,37 +287,7 @@ if __name__ == "__main__":
         os.environ['TRAC_ENV'] = options.trac
         from trac.core import TracError
         from trac.env import open_environment
-        from trac.ticket import Ticket
-        from trac.ticket.web_ui import TicketModule
-        from trac.util.text import to_unicode
         from trac.util.datefmt import utc
         ImportTickets()
 
 
-
-'''
-    def _fetchTickets(self):
-        changetime = self.stamp - (60 * 60 * 24 * 9)
-        cursor = self.db.cursor()
-        sql = "select id, summary from ticket where (status = 'infoneeded') and (changetime < %i)" % changetime
-        cursor.execute(sql)
-        result = cursor.fetchall()
-        # iterate through resultset
-        for record in result:
-            print("Expiring Ticket: #%s :: %s :: %s" % (record[0], record[1], self.project))
-            ticket = Ticket(self.env, record[0], self.db)
-        
-            # determine sequence number... 
-            cnum = 0
-            tm = TicketModule(self.env)
-            for change in tm.grouped_changelog_entries(ticket, self.db):
-                if change['permanent']:
-                    cnum += 1
-            
-            ticket['status'] = 'closed'
-            ticket['resolution'] = 'expired'
-            ticket.save_changes('trac-bot', 'Ticket automatically closed due to no activity.', self.now, self.db, cnum+1)
-            self.db.commit()
-            tn = TicketNotifyEmail(self.env)
-            tn.notify(ticket, newticket=0, modtime=self.now)
-'''
