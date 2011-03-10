@@ -13,6 +13,7 @@ pp = pprint.PrettyPrinter(indent=4)
 
 parser = OptionParser()
 parser.add_option('-t', '--trac', dest='trac', help='Path to the Trac project to export.')
+parser.add_option('-a', '--account', dest='account', help='Name of the GitHub Account to import into.')
 parser.add_option('-p', '--project', dest='project', help='Name of the GitHub Project to import into.')
 parser.add_option('-x', '--closed', action="store_true", default=False, dest='closed', help='Include closed tickets.')
 parser.add_option('-c', '--component', action="store_true", default=False, dest='component', help='Create a label for the Trac component.')
@@ -54,9 +55,10 @@ def urlopen(*args, **kw):
 
 class ImportTickets:
 
-    def __init__(self, trac=options.trac, project=options.project):
+    def __init__(self, trac=options.trac, account=options.account, project=options.project):
         self.env = open_environment(trac)
         self.trac = trac
+        self.account = account
         self.project = project
         self.now = datetime.now(utc)
         #Convert the timestamp from a float to an int to drop the .0
@@ -80,7 +82,7 @@ class ImportTickets:
 
         self.ghAuth()
 
-        self.projectPath = '%s/%s' % (self.organization or self.login, self.project)
+        self.projectPath = '%s/%s' % (self.organization or self.account or self.login, self.project)
 
         self.checkProject()
 
@@ -101,7 +103,6 @@ class ImportTickets:
         if 'error' in data:
             print_error("%s: %s" % (self.projectPath, data['error'][0]['error']))
 
-
     def ghAuth(self):
         login = os.popen('git config --global github.user').read().strip()
         token = os.popen('git config --global github.token').read().strip()
@@ -121,11 +122,11 @@ class ImportTickets:
         if self.includeClosed:
             where = ""
 
-        sql = "select id, summary, description, milestone, component, reporter, owner, status from ticket %s order by id" % where
+        sql = "select id, summary, status, description, milestone, component, reporter, owner from ticket %s order by id" % where
         cursor.execute(sql)
         # iterate through resultset
         tickets = []
-        for id, summary, description, milestone, component, reporter, owner, status in cursor:
+        for id, summary, status, description, milestone, component, reporter, owner in cursor:
             if milestone:
                 milestone = milestone.replace(' ', '_')
             if component:
@@ -138,6 +139,7 @@ class ImportTickets:
             ticket = {
                 'id': id,
                 'summary': summary,
+                'status': status,
                 'description': description,
                 'milestone': milestone,
                 'component': component,
@@ -179,7 +181,7 @@ class ImportTickets:
             'title': info['summary'],
             'body': info['description']
         }
-        data = urllib.urlencode(out)
+        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
 
         url = "%s/issues/open/%s" % (self.github, self.projectPath)
         req = urllib2.Request(url, data)
@@ -193,12 +195,12 @@ class ImportTickets:
             print_error('GitHub didn\'t return an issue number :(')
 
         if self.labelMilestone and 'milestone' in info:
-            if info['milestone'] != None:
-                self.createLabel(num, "M:%s" % info['milestone'])
+            if info['milestone'] != None and info['milestone'] != '':
+                self.createLabel(num, "%s" % info['milestone'])
 
         if self.labelComponent and 'component' in info:
             if info['component'] != None:
-                self.createLabel(num, "C:%s" % info['component'])
+                self.createLabel(num, "C_%s" % info['component'])
 
         if self.labelOwner and 'owner' in info:
             if info['owner'] != None:
@@ -231,7 +233,7 @@ class ImportTickets:
             'login': self.login,
             'token': self.token
         }
-        data = urllib.urlencode(out)
+        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
         req = urllib2.Request(url, data)
         response = urlopen(req)
         label_data = simplejson.load(response)
@@ -244,7 +246,7 @@ class ImportTickets:
             'token': self.token,
             'comment': comment
         }
-        data = urllib.urlencode(out)
+        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
         req = urllib2.Request(url, data)
         response = urlopen(req)
 
@@ -255,7 +257,7 @@ class ImportTickets:
             'login': self.login,
             'token': self.token
         }
-        data = urllib.urlencode(out)
+        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
         req = urllib2.Request(url, data)
         response = urlopen(req)
         close_data = simplejson.load(response)
