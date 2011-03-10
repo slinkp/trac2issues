@@ -1,6 +1,7 @@
 h1. Trac to GitHub Issues conversion script
 
-Imports are now working, including comments
+Imports are now working, including comments, and various optional
+metadata (as labels).
 
 h2. Usage
 
@@ -10,6 +11,10 @@ Usage: trac2issues.py [options]
 Options:
   -h, --help            show this help message and exit
   -t TRAC, --trac=TRAC  Path to the Trac project to export.
+  -a ACCOUNT, --account=ACCOUNT
+                        Name of the GitHub Account to import into. (If neither
+                        this nor --account is specified, user from your global
+                        git config will be used.)
   -p PROJECT, --project=PROJECT
                         Name of the GitHub Project to import into.
   -x, --closed          Include closed tickets.
@@ -19,6 +24,8 @@ Options:
   -r, --reporter        Add a comment naming the reporter.
   -u URL, --url=URL     The base URL for the trac install (will also link to
                         the old ticket in a comment).
+  -g ORGANIZATION, --org=ORGANIZATION
+                        Name of GitHub Organization (supercedes --account)
 </pre>
 
 <pre class="console">
@@ -28,5 +35,24 @@ sudo ./trac2issues.py \
     -u http://bugs.davglass.com/projects/davglass
 </pre>
 
+h2. Limitations
 
+It's rather slow: GitHub limits us to 60 API calls per second, and
+each issue might take several calls (one to create the issue, one per
+comment to add, one per label to add).
+
+This varies depending on which options you enable; more = slower.
+
+h2. Advice
+
+It is highly recommended to create a scratch github repository to run
+your imports to, before doing it to your real project repository.
+This is because it may take you several tries to decide exactly which
+options you want, and verify that it's going to work.
+
+Also, if you care about preserving issue numbers, your best bet is to
+use the -x option and do some trial runs on a scratch repo before
+trying it on your real repo.  GitHub doesn't allow you to delete
+issues, so you want to get it right in a single run.  (We don't yet
+try to work around numbering gaps due to deleted trac issues.)
 
