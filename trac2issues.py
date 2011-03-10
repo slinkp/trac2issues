@@ -247,6 +247,8 @@ class ImportTickets:
 
 
     def createLabel(self, num, name):
+        name = name.replace('/', '-')
+        name = urllib2.quote(name)
         print bold("\tAdding label %s to issue # %s" % (name, num))
         url = "%s/issues/label/add/%s/%s/%s" % (self.github, self.projectPath, name, num)
         out = {
