@@ -197,7 +197,7 @@ class ImportTickets:
             'title': info['summary'],
             'body': info['description']
         }
-        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
+        data = urlencode_utf8(out)
 
         url = "%s/issues/open/%s" % (self.github, self.projectPath)
         req = urllib2.Request(url, data)
@@ -255,7 +255,7 @@ class ImportTickets:
             'login': self.login,
             'token': self.token
         }
-        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
+        data = urlencode_utf8(out)
         req = urllib2.Request(url, data)
         response = urlopen(req)
         label_data = simplejson.load(response)
@@ -272,7 +272,7 @@ class ImportTickets:
             'token': self.token,
             'comment': comment
         }
-        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
+        data = urlencode_utf8(out)
         req = urllib2.Request(url, data)
         response = urlopen(req)
 
@@ -283,11 +283,18 @@ class ImportTickets:
             'login': self.login,
             'token': self.token
         }
-        data = urllib.urlencode(dict([k, v.encode('utf-8')] for k, v in out.items()))
+        data = urlencode_utf8(out)
         req = urllib2.Request(url, data)
         response = urlopen(req)
         close_data = simplejson.load(response)
 
+
+def urlencode_utf8(adict):
+    """Ensure dict's values are all utf-8 before urlencoding it.
+    """
+    data = urllib.urlencode(dict([k, v.encode('utf-8')]
+                                 for k, v in adict.items()))
+    return data
 
 ##Format bold text
 def bold(str):
