@@ -6,6 +6,7 @@ import re, os, sys, time, math, simplejson
 import string, shutil, urllib2, urllib, pprint, simplejson, datetime
 from datetime import datetime
 from optparse import OptionParser
+from time import sleep
 
 ##Setup pp for debugging
 pp = pprint.PrettyPrinter(indent=4)
@@ -47,6 +48,7 @@ class ImportTickets:
         self.labelOwner = options.owner
         self.labelReporter = options.reporter
         self.useURL = False
+        self.reqCount = 0
 
         if options.url:
             self.useURL = "%s/ticket/" % options.url
@@ -54,7 +56,7 @@ class ImportTickets:
         
         self.ghAuth()
         
-        self.checkProject()
+        #self.checkProject()
 
         if self.useURL:
             print bold('Does this look like a valid trac url? [y/N]\n %s1234567' % self.useURL)
@@ -146,14 +148,11 @@ class ImportTickets:
         out = {
             'login': self.login,
             'token': self.token,
-            'title': info['summary'],
-            'body': info['description']
+            'title': info['summary'].encode('utf-8'),
+            'body': info['description'].encode('utf-8')
         }
-        data = urllib.urlencode(out)
-
-        url = "%s/issues/open/%s/%s" % (self.github, self.login, self.project)
-        req = urllib2.Request(url, data)
-        response = urllib2.urlopen(req)
+        url = "%s/issues/open/%s" % (self.github, self.project)
+        response = self.makeRequest(url, out)
         ticket_data = simplejson.load(response)
 
         if 'number' in ticket_data['issue']:
@@ -164,11 +163,11 @@ class ImportTickets:
 
         if self.labelMilestone and 'milestone' in info:
             if info['milestone'] != None:
-                self.createLabel(num, "M:%s" % info['milestone'])
+                self.createLabel(num, "%s" % info['milestone'])
 
         if self.labelComponent and 'component' in info:
             if info['component'] != None:
-                self.createLabel(num, "C:%s" % info['component'])
+                self.createLabel(num, "%s" % info['component'])
 
         if self.labelOwner and 'owner' in info:
             if info['owner'] != None:
@@ -179,12 +178,13 @@ class ImportTickets:
                 self.createLabel(num, "@@%s" % info['reporter'])
         
         for i in info['history']:
-            if i['author']:
-                comment = "Author: %s\n%s" % (i['author'], i['comment'])
-            else:
-                comment = i['comment']
-                
-            self.addComment(num, comment)
+            if i['comment']: 
+                if i['author']:
+                    comment = "Author: %s\n%s" % (i['author'].encode('utf-8','replace'), i['comment'].encode('utf-8','replace'))
+                else:
+                    comment = i['comment'].encode('utf-8','replace')
+                    
+                self.addComment(num, comment)
 
         if self.useURL:
             comment = "Ticket imported from Trac:\n %s%s" % (self.useURL, info['id'])
@@ -193,27 +193,35 @@ class ImportTickets:
 
     def createLabel(self, num, name):
         print bold("\tAdding label %s to issue # %s" % (name, num))
-        url = "%s/issues/label/add/%s/%s/%s/%s" % (self.github, self.login, self.project, name, num)
+        url = "%s/issues/label/add/%s/%s/%s" % (self.github, self.project, urllib.quote(name), num)
         out = {
             'login': self.login,
             'token': self.token
         }
-        data = urllib.urlencode(out)
-        req = urllib2.Request(url, data)
-        response = urllib2.urlopen(req)
+        response = self.makeRequest(url, out)
         label_data = simplejson.load(response)
         
     def addComment(self, num, comment):
         print bold("\tAdding comment to issue # %s" % num)
-        url = "%s/issues/comment/%s/%s/%s" % (self.github, self.login, self.project, num)
+        url = "%s/issues/comment/%s/%s" % (self.github, self.project, num)
         out = {
             'login': self.login,
             'token': self.token,
             'comment': comment
         }
+        response = self.makeRequest(url, out)
+
+    def makeRequest(self, url, out):
         data = urllib.urlencode(out)
         req = urllib2.Request(url, data)
-        response = urllib2.urlopen(req)
+        print url
+        print data
+        self.reqCount += 1
+        if (self.reqCount % 60 == 0):
+            print "Sleeping for 60 seconds"
+            sleep(60)
+        print "Request no: %s" % (self.reqCount)
+        return urllib2.urlopen(req)
         
         
 
