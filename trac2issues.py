@@ -21,6 +21,8 @@ parser.add_option('-m', '--milestone', action="store_true", default=False, dest=
 parser.add_option('-o', '--owner', action="store_true", default=False, dest='owner', help='Create a label for the Trac owner.')
 parser.add_option('-r', '--reporter', action="store_true", default=False, dest='reporter', help='Add a comment naming the reporter.')
 parser.add_option('-u', '--url', dest='url', help='The base URL for the trac install (will also link to the old ticket in a comment).')
+parser.add_option('-s', '--start', dest='start', help='The trac ticket to start importing at.')
+
 
 (options, args) = parser.parse_args(sys.argv[1:])
 
@@ -47,6 +49,7 @@ class ImportTickets:
         self.labelComponent = options.component
         self.labelOwner = options.owner
         self.labelReporter = options.reporter
+        self.start = options.start
         self.useURL = False
         self.reqCount = 0
 
@@ -98,6 +101,9 @@ class ImportTickets:
         where = " where (status != 'closed') "
         if self.includeClosed:
             where = ""
+
+        if self.start:
+            where = ' where id >= %s' % self.start
 
         sql = "select id, summary, description, milestone, component, reporter, owner, status from ticket %s order by id" % where
         cursor.execute(sql)
