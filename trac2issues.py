@@ -3,7 +3,7 @@
 ##Script to convert Trac Tickets to GitHub Issues
 
 import re, os, sys, time, math, simplejson
-import string, shutil, urllib2, urllib, pprint, simplejson, datetime
+import string, shutil, urllib2, urllib, pprint, datetime, base64, json, getpass
 from datetime import datetime
 from optparse import OptionParser
 from time import sleep
@@ -36,7 +36,7 @@ class ImportTickets:
         self.now = datetime.now(utc)
         #Convert the timestamp from a float to an int to drop the .0
         self.stamp = int(math.floor(time.time()))
-        self.github = 'https://github.com/api/v2/json'
+        self.github = 'https://api.github.com'
         try:
             self.db = self.env.get_db_cnx()
         except TracError, e:
@@ -55,6 +55,9 @@ class ImportTickets:
 
         
         self.ghAuth()
+        self.milestones = self.loadMilestones()
+        self.contributors = self.loadContributors()
+
         
         #self.checkProject()
 
@@ -86,6 +89,8 @@ class ImportTickets:
 
         self.login = login
         self.token = token
+        print "Gitub password for %s" % login
+        self.password = getpass.getpass()
 
     def _fetchTickets(self):
         cursor = self.db.cursor()        
@@ -94,11 +99,11 @@ class ImportTickets:
         if self.includeClosed:
             where = ""
 
-        sql = "select id, summary, description, milestone, component, reporter, owner from ticket %s order by id" % where
+        sql = "select id, summary, description, milestone, component, reporter, owner, status from ticket %s order by id" % where
         cursor.execute(sql)
         # iterate through resultset
         tickets = []
-        for id, summary, description, milestone, component, reporter, owner in cursor:
+        for id, summary, description, milestone, component, reporter, owner, status in cursor:
             if milestone:
                 milestone = milestone.replace(' ', '_')
             if component:
@@ -116,6 +121,7 @@ class ImportTickets:
                 'component': component,
                 'reporter': reporter,
                 'owner': owner,
+                'status': status,
                 'history': []
             }
             cursor2 = self.db.cursor()        
@@ -145,38 +151,35 @@ class ImportTickets:
         
     def createIssue(self, info):
         print bold('Creating issue.')
+        
         out = {
-            'login': self.login,
-            'token': self.token,
+            'access_token': self.token,
             'title': info['summary'].encode('utf-8'),
             'body': info['description'].encode('utf-8')
         }
-        url = "%s/issues/open/%s" % (self.github, self.project)
+
+        if self.labelMilestone and 'milestone' in info:
+            if info['milestone'] and info['milestone'] != 'Unassigned':
+                out['milestone'] = self.getMilestone(info['milestone'])
+
+        if self.labelComponent and 'component' in info:
+            if info['component']:
+                out['labels'] = [info['component']]
+
+        if self.labelOwner and 'owner' in info:
+            if info['owner'] and info['owner'] in self.contributors:
+                out['assignee'] = info['owner']
+
+        url = "%s/repos/%s/issues" % (self.github, self.project)
         response = self.makeRequest(url, out)
         ticket_data = simplejson.load(response)
 
-        if 'number' in ticket_data['issue']:
-            num = ticket_data['issue']['number']
+        if 'number' in ticket_data:
+            num = ticket_data['number']
             print bold('Issue #%s created.' % num)
         else:
             print_error('GitHub didn\'t return an issue number :(')
 
-        if self.labelMilestone and 'milestone' in info:
-            if info['milestone'] != None:
-                self.createLabel(num, "%s" % info['milestone'])
-
-        if self.labelComponent and 'component' in info:
-            if info['component'] != None:
-                self.createLabel(num, "%s" % info['component'])
-
-        if self.labelOwner and 'owner' in info:
-            if info['owner'] != None:
-                self.createLabel(num, "@%s" % info['owner'])
-
-        if self.labelReporter and 'reporter' in info:
-            if info['reporter'] != None:
-                self.createLabel(num, "@@%s" % info['reporter'])
-        
         for i in info['history']:
             if i['comment']: 
                 if i['author']:
@@ -189,39 +192,87 @@ class ImportTickets:
         if self.useURL:
             comment = "Ticket imported from Trac:\n %s%s" % (self.useURL, info['id'])
             self.addComment(num, comment)
-            
 
-    def createLabel(self, num, name):
-        print bold("\tAdding label %s to issue # %s" % (name, num))
-        url = "%s/issues/label/add/%s/%s/%s" % (self.github, self.project, urllib.quote(name), num)
+        if info['status'] == 'closed':
+            self.closeTicket(num)
+            
+    def getMilestone(self, name):
+        if name in self.milestones:
+            return self.milestones[name]
+        url = "%s/repos/%s/milestones" % (self.github, self.project)
         out = {
-            'login': self.login,
-            'token': self.token
+            'access_token': self.token,
+            'title': name
         }
         response = self.makeRequest(url, out)
-        label_data = simplejson.load(response)
+        milestone_data = simplejson.load(response)
+        num = milestone_data['number']
+        self.milestones[name] = num
+        return num
+
+    def loadMilestones(self):
+        url = "%s/repos/%s/milestones" % (self.github, self.project)
+        response = self.makeRequest(url, None)
+        milestones_data = simplejson.load(response)
+        milestones = {}
+        for milestone_data in milestones_data:
+            milestones[milestone_data['title']] = milestone_data['number']
+        return milestones
+
+    def loadContributors(self):
+        url = "%s/repos/%s/collaborators" % (self.github, self.project)
+        response = self.makeRequest(url, None)
+        collaborators_data = simplejson.load(response)
+        collaborators = []
+        for collaborators_data in collaborators_data:
+            collaborators.append(collaborators_data['login'])
+        return collaborators
         
     def addComment(self, num, comment):
         print bold("\tAdding comment to issue # %s" % num)
-        url = "%s/issues/comment/%s/%s" % (self.github, self.project, num)
+        url = "%s/repos/%s/issues/%s/comments" % (self.github, self.project, num)
         out = {
-            'login': self.login,
-            'token': self.token,
-            'comment': comment
+            'access_token': self.token,
+            'body': comment
+        }
+        response = self.makeRequest(url, out)
+
+    def closeTicket(self, num):
+        url = "%s/repos/%s/issues/%s" % (self.github, self.project, num)
+        out = {
+            'access_token': self.token,
+            'state': 'closed'
         }
         response = self.makeRequest(url, out)
 
     def makeRequest(self, url, out):
-        data = urllib.urlencode(out)
-        req = urllib2.Request(url, data)
+        req = urllib2.Request(url) if out is None else urllib2.Request(url, json.dumps(out))
+
+        base64string = base64.encodestring(
+                        '%s:%s' % (self.login, self.password))[:-1]
+        authheader =  "Basic %s" % base64string
+        req.add_header("Authorization", authheader)
         print url
-        print data
+        print json.dumps(out)
         self.reqCount += 1
         if (self.reqCount % 60 == 0):
-            print "Sleeping for 60 seconds"
-            sleep(60)
+            self.apiLimitExceeded()
         print "Request no: %s" % (self.reqCount)
-        return urllib2.urlopen(req)
+        try:
+            response = urllib2.urlopen(req)
+        except urllib2.HTTPError, err:
+            if err.code == 403:
+               self.apiLimitExceeded()
+               response = self.makeRequest(url, out) 
+            else:
+               raise
+
+        return response
+
+    def apiLimitExceeded(self):
+        self.reqCount = 0
+        print "Sleeping for 60 seconds"
+        sleep(60)
         
         
 
