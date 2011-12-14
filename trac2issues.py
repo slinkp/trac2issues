@@ -211,13 +211,18 @@ class ImportTickets:
         return num
 
     def loadMilestones(self):
-        url = "%s/repos/%s/milestones" % (self.github, self.project)
+        milestones = {}
+        self.loadMilestonesForStatus('open', milestones)
+        self.loadMilestonesForStatus('closed', milestones)
+        return milestones
+
+    def loadMilestonesForStatus(self, param, milestones):
+        url = "%s/repos/%s/milestones?state=%s" % (self.github, self.project, param)
         response = self.makeRequest(url, None)
         milestones_data = simplejson.load(response)
-        milestones = {}
         for milestone_data in milestones_data:
+            print 'Found milestone %s' % milestone_data['title']
             milestones[milestone_data['title']] = milestone_data['number']
-        return milestones
 
     def loadContributors(self):
         if (os.path.exists('authors.txt')):
