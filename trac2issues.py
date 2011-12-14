@@ -168,7 +168,7 @@ class ImportTickets:
 
         if self.labelOwner and 'owner' in info:
             if info['owner'] and info['owner'] in self.contributors:
-                out['assignee'] = info['owner']
+                out['assignee'] = self.contributors[info['owner']]
 
         url = "%s/repos/%s/issues" % (self.github, self.project)
         response = self.makeRequest(url, out)
@@ -220,12 +220,17 @@ class ImportTickets:
         return milestones
 
     def loadContributors(self):
+        if (os.path.exists('authors.txt')):
+            with open("authors.txt") as fd:
+                collaborators = dict(line.strip().split(None, 1) for line in fd)
+        else:
+            collaborators = {}
         url = "%s/repos/%s/collaborators" % (self.github, self.project)
         response = self.makeRequest(url, None)
         collaborators_data = simplejson.load(response)
-        collaborators = []
-        for collaborators_data in collaborators_data:
-            collaborators.append(collaborators_data['login'])
+        for collaborator_data in collaborators_data:
+            login = collaborator_data['login']
+            collaborators[login] = login
         return collaborators
         
     def addComment(self, num, comment):
