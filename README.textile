@@ -18,12 +18,13 @@ Options:
   -p PROJECT, --project=PROJECT
                         Name of the GitHub Project to import into.
   -x, --closed          Include closed tickets.
+  -y, --type            Create a label for the Trac ticket type.
   -c, --component       Create a label for the Trac component.
   -m, --milestone       Create a label for the Trac milestone.
+  -r, --reporter        Create a label for the Trac reporter.
   -o, --owner           Create a label for the Trac owner.
-  -r, --reporter        Add a comment naming the reporter.
-  -u URL, --url=URL     The base URL for the trac install (will also link to
-                        the old ticket in a comment).
+  -u URL, --url=URL     Base URL for the Trac install (if specified, will
+                        create a link to the old ticket in a comment).
   -g ORGANIZATION, --org=ORGANIZATION
                         Name of GitHub Organization (supercedes --account)
 </pre>
@@ -55,4 +56,3 @@ use the -x option and do some trial runs on a scratch repo before
 trying it on your real repo.  GitHub doesn't allow you to delete
 issues, so you want to get it right in a single run.  (We don't yet
 try to work around numbering gaps due to deleted trac issues.)
-
