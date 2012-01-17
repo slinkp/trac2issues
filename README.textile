@@ -3,6 +3,10 @@ h1. Trac to GitHub Issues conversion script
 Imports are now working, including comments, and various optional
 metadata (as labels).
 
+h2. Requirements
+
+simplejson (can be installed with 'pip install simplejson')
+
 h2. Usage
 
 <pre class="console">$ ./trac2issues.py --help
