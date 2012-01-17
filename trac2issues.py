@@ -16,11 +16,12 @@ parser.add_option('-t', '--trac', dest='trac', help='Path to the Trac project to
 parser.add_option('-a', '--account', dest='account', help='Name of the GitHub Account to import into. (If neither this nor --account is specified, user from your global git config will be used.)')
 parser.add_option('-p', '--project', dest='project', help='Name of the GitHub Project to import into.')
 parser.add_option('-x', '--closed', action="store_true", default=False, dest='closed', help='Include closed tickets.')
+parser.add_option('-y', '--type', action="store_true", default=False, dest='type', help='Create a label for the Trac ticket type.')
 parser.add_option('-c', '--component', action="store_true", default=False, dest='component', help='Create a label for the Trac component.')
 parser.add_option('-m', '--milestone', action="store_true", default=False, dest='milestone', help='Create a label for the Trac milestone.')
+parser.add_option('-r', '--reporter', action="store_true", default=False, dest='reporter', help='Create a label for the Trac reporter.')
 parser.add_option('-o', '--owner', action="store_true", default=False, dest='owner', help='Create a label for the Trac owner.')
-parser.add_option('-r', '--reporter', action="store_true", default=False, dest='reporter', help='Add a comment naming the reporter.')
-parser.add_option('-u', '--url', dest='url', help='The base URL for the trac install (will also link to the old ticket in a comment).')
+parser.add_option('-u', '--url', dest='url', help='Base URL for the Trac install (if specified, will create a link to the old ticket in a comment).')
 parser.add_option('-g', '--org', dest='organization', help='Name of GitHub Organization (supercedes --account)')
 
 (options, args) = parser.parse_args(sys.argv[1:])
@@ -83,6 +84,7 @@ class ImportTickets:
             print_error(e.message)
 
         self.includeClosed = options.closed
+        self.labelType = options.type
         self.labelMilestone = options.milestone
         self.labelComponent = options.component
         self.labelOwner = options.owner
@@ -138,11 +140,11 @@ class ImportTickets:
         if self.includeClosed:
             where = ""
 
-        sql = "select id, summary, status, description, milestone, component, reporter, owner from ticket %s order by id" % where
+        sql = "select id, summary, status, description, milestone, component, reporter, owner, type from ticket %s order by id" % where
         cursor.execute(sql)
         # iterate through resultset
         tickets = []
-        for id, summary, status, description, milestone, component, reporter, owner in cursor:
+        for id, summary, status, description, milestone, component, reporter, owner, type in cursor:
             if milestone:
                 milestone = milestone.replace(' ', '_')
             if component:
@@ -151,6 +153,8 @@ class ImportTickets:
                 owner = owner.replace(' ', '_')
             if reporter:
                 reporter = reporter.replace(' ', '_')
+            if type:
+                type = type.replace(' ', '_')
 
             ticket = {
                 'id': id,
@@ -163,6 +167,7 @@ class ImportTickets:
                 'owner': owner,
                 'history': [],
                 'status': status,
+                'type': type,
             }
             cursor2 = self.db.cursor()
             sql = 'select author, time, newvalue from ticket_change where (ticket = %s) and (field = "comment")' % id
@@ -218,6 +223,9 @@ class ImportTickets:
 
         if self.labelMilestone and info_has_key('milestone'):
             self.createLabel(num, "%s" % info['milestone'])
+
+        if self.labelType and info_has_key('type'):
+            self.createLabel(num, info['type'])
 
         if self.labelComponent and info_has_key('component'):
             self.createLabel(num, "C_%s" % info['component'])
@@ -324,5 +332,3 @@ if __name__ == "__main__":
         from trac.env import open_environment
         from trac.util.datefmt import utc
         ImportTickets()
-
-
