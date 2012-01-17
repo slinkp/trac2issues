@@ -19,9 +19,9 @@ parser.add_option('-x', '--closed', action="store_true", default=False, dest='cl
 parser.add_option('-y', '--type', action="store_true", default=False, dest='type', help='Create a label for the Trac ticket type.')
 parser.add_option('-c', '--component', action="store_true", default=False, dest='component', help='Create a label for the Trac component.')
 parser.add_option('-m', '--milestone', action="store_true", default=False, dest='milestone', help='Create a label for the Trac milestone.')
+parser.add_option('-r', '--reporter', action="store_true", default=False, dest='reporter', help='Create a label for the Trac reporter.')
 parser.add_option('-o', '--owner', action="store_true", default=False, dest='owner', help='Create a label for the Trac owner.')
-parser.add_option('-r', '--reporter', action="store_true", default=False, dest='reporter', help='Add a comment naming the reporter.')
-parser.add_option('-u', '--url', dest='url', help='The base URL for the trac install (will also link to the old ticket in a comment).')
+parser.add_option('-u', '--url', dest='url', help='Base URL for the Trac install (if specified, will create a link to the old ticket in a comment).')
 parser.add_option('-g', '--org', dest='organization', help='Name of GitHub Organization (supercedes --account)')
 
 (options, args) = parser.parse_args(sys.argv[1:])
