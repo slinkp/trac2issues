@@ -2,10 +2,11 @@
 
 ##Script to convert Trac Tickets to GitHub Issues
 
-import os, sys, time, math, simplejson
-import urllib2, urllib, pprint
+import re, os, sys, time, math, simplejson
+import string, shutil, urllib2, urllib, pprint, datetime, base64, json, getpass
 from datetime import datetime
 from optparse import OptionParser
+from time import sleep
 
 ##Setup pp for debugging
 pp = pprint.PrettyPrinter(indent=4)
@@ -23,6 +24,7 @@ parser.add_option('-r', '--reporter', action="store_true", default=False, dest='
 parser.add_option('-o', '--owner', action="store_true", default=False, dest='owner', help='Create a label for the Trac owner.')
 parser.add_option('-u', '--url', dest='url', help='Base URL for the Trac install (if specified, will create a link to the old ticket in a comment).')
 parser.add_option('-g', '--org', dest='organization', help='Name of GitHub Organization (supercedes --account)')
+parser.add_option('-s', '--start', dest='start', help='The trac ticket to start importing at.')
 
 (options, args) = parser.parse_args(sys.argv[1:])
 
@@ -77,7 +79,7 @@ class ImportTickets:
         self.now = datetime.now(utc)
         #Convert the timestamp from a float to an int to drop the .0
         self.stamp = int(math.floor(time.time()))
-        self.github = 'https://github.com/api/v2/json'
+        self.github = 'https://api.github.com'
         try:
             self.db = self.env.get_db_cnx()
         except TracError, e:
@@ -89,8 +91,10 @@ class ImportTickets:
         self.labelComponent = options.component
         self.labelOwner = options.owner
         self.labelReporter = options.reporter
+        self.start = options.start
         self.useURL = False
         self.organization = options.organization
+        self.reqCount = 0
 
         if options.url:
             self.useURL = "%s/ticket/" % options.url
@@ -100,6 +104,8 @@ class ImportTickets:
         self.projectPath = '%s/%s' % (self.organization or self.account or self.login, self.project)
 
         self.checkProject()
+        self.milestones = self.loadMilestones()
+        self.contributors = self.loadContributors()
 
         if self.useURL:
             print bold('Does this look like a valid trac url? [y/N]\n %s1234567' % self.useURL)
@@ -132,6 +138,8 @@ class ImportTickets:
 
         self.login = login
         self.token = token
+        print "Gitub password for %s" % login
+        self.password = getpass.getpass()
 
     def _fetchTickets(self):
         cursor = self.db.cursor()
@@ -139,6 +147,12 @@ class ImportTickets:
         where = " where (status != 'closed') "
         if self.includeClosed:
             where = ""
+
+        if self.start:
+            if where:
+                where += " and id >= %s" % self.start
+            else:
+                where = ' where id >= %s' % self.start
 
         sql = "select id, summary, status, description, milestone, component, reporter, owner, type from ticket %s order by id" % where
         cursor.execute(sql)
@@ -197,76 +211,102 @@ class ImportTickets:
     def createIssue(self, info):
         print bold('Creating issue from ticket %s' % info['id'])
         out = {
-            'login': self.login,
-            'token': self.token,
-            'title': info['summary'],
-            'body': info['description']
+            'access_token': self.token,
+            'title': info['summary'].encode('utf-8'),
+            'body': info['description'].encode('utf-8'),
+            'labels': [],
         }
-        data = urlencode_utf8(out)
-
-        url = "%s/issues/open/%s" % (self.github, self.projectPath)
-        req = urllib2.Request(url, data)
-        response = urlopen(req)
-        ticket_data = simplejson.load(response)
-
-        if 'number' in ticket_data['issue']:
-            num = ticket_data['issue']['number']
-            print bold('Issue #%s created.' % num)
-        else:
-            print_error('GitHub didn\'t return an issue number :(')
 
         def info_has_key(key):
             value = info.get(key)
-            if value is not None and value.strip() not in ('(none)', ''):
+            if value is not None and value.strip() not in ('(none)', '', 'Unassigned'):
                 return value
             return False
 
         if self.labelMilestone and info_has_key('milestone'):
-            self.createLabel(num, "%s" % info['milestone'])
+            out['milestone'] = self.getMilestone(info['milestone'])
 
         if self.labelType and info_has_key('type'):
-            self.createLabel(num, info['type'])
+            out['labels'].append(info['type'])
 
         if self.labelComponent and info_has_key('component'):
-            self.createLabel(num, "C_%s" % info['component'])
+            out['labels'].append(info['component'])
 
         if self.labelOwner and info_has_key('owner'):
-            self.createLabel(num, "@%s" % info['owner'])
+            if info['owner'] in self.contributors:
+                out['assignee'] = self.contributors[info['owner']]
 
         if self.labelReporter and info_has_key('reporter'):
-            self.createLabel(num, "@@%s" % info['reporter'])
+            out['labels'].append("@@%s" % info['reporter'])
+
+        url = "%s/repos/%s/issues" % (self.github, self.projectPath)
+        response = self.makeRequest(url, out)
+        ticket_data = simplejson.load(response)
+
+        if 'number' in ticket_data:
+            num = ticket_data['number']
+            print bold('Issue #%s created.' % num)
+        else:
+            print_error('GitHub didn\'t return an issue number :(')
 
         for i in info['history']:
-            # We don't really want comments with nothing but an author, do we?
-            if not i['comment']:
-                continue
-            if i['author']:
-                comment = "Author: %s\n%s" % (i['author'], i['comment'])
-            else:
-                comment = i['comment']
-            self.addComment(num, comment)
+            if i['comment']: 
+                if i['author']:
+                    comment = "Author: %s\n%s" % (i['author'].encode('utf-8','replace'), i['comment'].encode('utf-8','replace'))
+                else:
+                    comment = i['comment'].encode('utf-8','replace')
+                    
+                self.addComment(num, comment)
 
         if self.useURL:
             comment = "Ticket imported from Trac:\n %s%s" % (self.useURL, info['id'])
             self.addComment(num, comment)
 
         if info.get('status') == 'closed':
-            self.closeIssue(num)
+            self.closeTicket(num)
 
 
-    def createLabel(self, num, name):
-        name = name.replace('/', '-')
-        name = urllib2.quote(name)
-        print bold("\tAdding label %s to issue # %s" % (name, num))
-        url = "%s/issues/label/add/%s/%s/%s" % (self.github, self.projectPath, name, num)
+    def getMilestone(self, name):
+        if name in self.milestones:
+            return self.milestones[name]
+        url = "%s/repos/%s/milestones" % (self.github, self.projectPath)
         out = {
-            'login': self.login,
-            'token': self.token
+            'access_token': self.token,
+            'title': name
         }
-        data = urlencode_utf8(out)
-        req = urllib2.Request(url, data)
-        response = urlopen(req)
-        label_data = simplejson.load(response)
+        response = self.makeRequest(url, out)
+        milestone_data = simplejson.load(response)
+        num = milestone_data['number']
+        self.milestones[name] = num
+        return num
+
+    def loadMilestones(self):
+        milestones = {}
+        self.loadMilestonesForStatus('open', milestones)
+        self.loadMilestonesForStatus('closed', milestones)
+        return milestones
+
+    def loadMilestonesForStatus(self, param, milestones):
+        url = "%s/repos/%s/milestones?state=%s" % (self.github, self.projectPath, param)
+        response = self.makeRequest(url, None)
+        milestones_data = simplejson.load(response)
+        for milestone_data in milestones_data:
+            print 'Found milestone %s' % milestone_data['title']
+            milestones[milestone_data['title']] = milestone_data['number']
+
+    def loadContributors(self):
+        if (os.path.exists('authors.txt')):
+            with open("authors.txt") as fd:
+                collaborators = dict(line.strip().split(None, 1) for line in fd)
+        else:
+            collaborators = {}
+        url = "%s/repos/%s/collaborators" % (self.github, self.projectPath)
+        response = self.makeRequest(url, None)
+        collaborators_data = simplejson.load(response)
+        for collaborator_data in collaborators_data:
+            login = collaborator_data['login']
+            collaborators[login] = login
+        return collaborators
 
     def addComment(self, num, comment):
         comment = comment.strip()
@@ -276,26 +316,48 @@ class ImportTickets:
         print bold("\tAdding comment to issue # %s" % num)
         url = "%s/issues/comment/%s/%s" % (self.github, self.projectPath, num)
         out = {
-            'login': self.login,
-            'token': self.token,
-            'comment': comment
+            'access_token': self.token,
+            'body': comment
         }
-        data = urlencode_utf8(out)
-        req = urllib2.Request(url, data)
-        response = urlopen(req)
+        out = urlencode_utf8(out)
+        response = self.makeRequest(url, out)
 
-    def closeIssue(self, num):
-        print bold("\tClosing issue # %s" %  num)
-        url = "%s/issues/close/%s/%s" % (self.github, self.projectPath, num)
+    def closeTicket(self, num):
+        url = "%s/repos/%s/issues/%s" % (self.github, self.projectPath, num)
         out = {
-            'login': self.login,
-            'token': self.token
+            'access_token': self.token,
+            'state': 'closed'
         }
-        data = urlencode_utf8(out)
-        req = urllib2.Request(url, data)
-        response = urlopen(req)
-        close_data = simplejson.load(response)
+        response = self.makeRequest(url, out)
 
+    def makeRequest(self, url, out):
+        req = urllib2.Request(url) if out is None else urllib2.Request(url, json.dumps(out))
+
+        base64string = base64.encodestring(
+                        '%s:%s' % (self.login, self.password))[:-1]
+        authheader =  "Basic %s" % base64string
+        req.add_header("Authorization", authheader)
+        print url
+        print json.dumps(out)
+        self.reqCount += 1
+        if (self.reqCount % 60 == 0):
+            self.apiLimitExceeded()
+        print "Request no: %s" % (self.reqCount)
+        try:
+            response = urllib2.urlopen(req)
+        except urllib2.HTTPError, err:
+            if err.code == 403:
+               self.apiLimitExceeded()
+               response = self.makeRequest(url, out) 
+            else:
+               raise
+
+        return response
+
+    def apiLimitExceeded(self):
+        self.reqCount = 0
+        print "Sleeping for 60 seconds"
+        sleep(60)
 
 def urlencode_utf8(adict):
     """Ensure dict's values are all utf-8 before urlencoding it.
