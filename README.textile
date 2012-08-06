@@ -42,9 +42,12 @@ sudo ./trac2issues.py \
 
 h2. Limitations
 
+Does not attempt to change syntax of the issue body; issues that use
+Trac wiki syntax features will look wrong.
+
 It's rather slow: GitHub limits us to 60 API calls per second, and
 each issue might take several calls (one to create the issue, one per
-comment to add, one per label to add).
+comment to add).
 
 This varies depending on which options you enable; more = slower.
 
