@@ -14,7 +14,7 @@ pp = pprint.PrettyPrinter(indent=4)
 
 parser = OptionParser()
 parser.add_option('-t', '--trac', dest='trac', help='Path to the Trac project to export.')
-parser.add_option('-a', '--account', dest='account', help='Name of the GitHub Account to import into. (If neither this nor --account is specified, user from your global git config will be used.)')
+parser.add_option('-a', '--account', dest='account', help='Name of the GitHub Account to import into. (If not specified, user from your global git config will be used.)')
 parser.add_option('-p', '--project', dest='project', help='Name of the GitHub Project to import into.')
 parser.add_option('-x', '--closed', action="store_true", default=False, dest='closed', help='Include closed tickets.')
 parser.add_option('-y', '--type', action="store_true", default=False, dest='type', help='Create a label for the Trac ticket type.')
@@ -25,7 +25,8 @@ parser.add_option('-o', '--owner', action="store_true", default=False, dest='own
 parser.add_option('-u', '--url', dest='url', help='Base URL for the Trac install (if specified, will create a link to the old ticket in a comment).')
 parser.add_option('-g', '--org', dest='organization', help='Name of GitHub Organization (supercedes --account)')
 parser.add_option('-s', '--start', dest='start', help='The trac ticket to start importing at.')
-
+parser.add_option('--authors', dest='authors_file', default='authors.txt',
+                  help='File to load assignee login names from. Each line is space-separated like: trac-login github-login')
 (options, args) = parser.parse_args(sys.argv[1:])
 
 
@@ -106,6 +107,7 @@ class ImportTickets:
         self.checkProject()
         self.milestones = self.loadMilestones()
         self.contributors = self.loadContributors()
+        self.labels = self.loadLabels()
 
         if self.useURL:
             print bold('Does this look like a valid trac url? [y/N]\n %s1234567' % self.useURL)
@@ -114,12 +116,12 @@ class ImportTickets:
             if go[0:1] != 'y':
                 print_error('Try Again..')
 
+
         ##We own this project..
         self._fetchTickets()
 
-
     def checkProject(self):
-        url = "%s/repos/show/%s" % (self.github, self.projectPath)
+        url = "%s/repos/%s" % (self.github, self.projectPath)
         try:
             data = simplejson.load(urlopen(url))
         except urllib2.HTTPError, e:
@@ -129,15 +131,11 @@ class ImportTickets:
 
     def ghAuth(self):
         login = os.popen('git config --global github.user').read().strip()
-        token = os.popen('git config --global github.token').read().strip()
 
         if not login:
             print_error('GitHub Login Not Found: need github.user in your global config')
-        if not token:
-            print_error('GitHub API Token Not Found: need github.token in your global config')
 
         self.login = login
-        self.token = token
         print "Gitub password for %s" % login
         self.password = getpass.getpass()
 
@@ -211,7 +209,6 @@ class ImportTickets:
     def createIssue(self, info):
         print bold('Creating issue from ticket %s' % info['id'])
         out = {
-            'access_token': self.token,
             'title': info['summary'].encode('utf-8'),
             'body': info['description'].encode('utf-8'),
             'labels': [],
@@ -237,7 +234,13 @@ class ImportTickets:
                 out['assignee'] = self.contributors[info['owner']]
 
         if self.labelReporter and info_has_key('reporter'):
+            # Unfortunately github api v3 still has no way to specify the
+            # creator of an issue.
             out['labels'].append("@@%s" % info['reporter'])
+
+        for label in out['labels']:
+            # Labels must exist before being assigned to tickets.
+            self.createLabel(label)
 
         url = "%s/repos/%s/issues" % (self.github, self.projectPath)
         response = self.makeRequest(url, out)
@@ -265,13 +268,23 @@ class ImportTickets:
         if info.get('status') == 'closed':
             self.closeTicket(num)
 
+    def createLabel(self, name):
+        # Can't add a label to a ticket unless it exists, humph.
+        if name in self.labels:
+            return
+        print bold("\tAdding label %s" % (name,))
+        url = "%s/repos/%s/labels" % (self.github, self.projectPath)
+        out = {'name': name,
+               'color': "FFFFFF"}
+
+        self.makeRequest(url, out)
+        self.labels.add(name)
 
     def getMilestone(self, name):
         if name in self.milestones:
             return self.milestones[name]
         url = "%s/repos/%s/milestones" % (self.github, self.projectPath)
         out = {
-            'access_token': self.token,
             'title': name
         }
         response = self.makeRequest(url, out)
@@ -295,8 +308,8 @@ class ImportTickets:
             milestones[milestone_data['title']] = milestone_data['number']
 
     def loadContributors(self):
-        if (os.path.exists('authors.txt')):
-            with open("authors.txt") as fd:
+        if (os.path.exists(self.authors_file)):
+            with open(self.authors_file) as fd:
                 collaborators = dict(line.strip().split(None, 1) for line in fd)
         else:
             collaborators = {}
@@ -305,8 +318,14 @@ class ImportTickets:
         collaborators_data = simplejson.load(response)
         for collaborator_data in collaborators_data:
             login = collaborator_data['login']
-            collaborators[login] = login
+            collaborators.setdefault(login, login)
         return collaborators
+
+    def loadLabels(self):
+        url = '%s/repos/%s/labels' % (self.github, self.projectPath)
+        response = self.makeRequest(url, None)
+        labels = [label['name'] for label in simplejson.load(response)]
+        return set(labels)
 
     def addComment(self, num, comment):
         comment = comment.strip()
@@ -314,18 +333,15 @@ class ImportTickets:
             print bold("\tSkipping empty comment on issue # %s" % num)
             return
         print bold("\tAdding comment to issue # %s" % num)
-        url = "%s/issues/comment/%s/%s" % (self.github, self.projectPath, num)
+        url = "%s/repos/%s/issues/%s/comments" % (self.github, self.projectPath, num)
         out = {
-            'access_token': self.token,
             'body': comment
         }
-        out = urlencode_utf8(out)
         response = self.makeRequest(url, out)
 
     def closeTicket(self, num):
         url = "%s/repos/%s/issues/%s" % (self.github, self.projectPath, num)
         out = {
-            'access_token': self.token,
             'state': 'closed'
         }
         response = self.makeRequest(url, out)
@@ -340,7 +356,7 @@ class ImportTickets:
         print url
         print json.dumps(out)
         self.reqCount += 1
-        if (self.reqCount % 60 == 0):
+        if (self.reqCount % GITHUB_MAX_PER_MINUTE == 0):
             self.apiLimitExceeded()
         print "Request no: %s" % (self.reqCount)
         try:
@@ -349,8 +365,12 @@ class ImportTickets:
             if err.code == 403:
                self.apiLimitExceeded()
                response = self.makeRequest(url, out) 
+            elif err.code >= 400:
+                sys.stderr.write(red("HTTP error!\n"))
+                sys.stderr.write(err.read() + '\n')
+                raise
             else:
-               raise
+                raise
 
         return response
 
