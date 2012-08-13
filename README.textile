@@ -42,8 +42,9 @@ sudo ./trac2issues.py \
 
 h2. Limitations
 
-Does not attempt to change syntax of the issue body; issues that use
-Trac wiki syntax features will look wrong.
+Does not convert many Trac wiki syntax features to Markdown; so, issues or
+comments that use much Trac syntax will look wrong.  One thing we
+do support is the "{{{ ... }}}" literal text delimeters.
 
 It's rather slow: GitHub limits us to 60 API calls per second, and
 each issue might take several calls (one to create the issue, one per
