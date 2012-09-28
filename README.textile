@@ -10,7 +10,7 @@ simplejson (can be installed with 'pip install simplejson')
 h2. Usage
 
 <pre class="console">$ ./trac2issues.py --help
-Usage: trac2issues.py [options]
+Usage: trac2issues.py [options] import|dump
 
 Options:
   -h, --help            show this help message and exit
@@ -24,13 +24,22 @@ Options:
   -x, --closed          Include closed tickets.
   -y, --type            Create a label for the Trac ticket type.
   -c, --component       Create a label for the Trac component.
-  -m, --milestone       Create a label for the Trac milestone.
   -r, --reporter        Create a label for the Trac reporter.
   -o, --owner           Create a label for the Trac owner.
+  -n, --resolution      Create a label for the Trac ticket resolution.
   -u URL, --url=URL     Base URL for the Trac install (if specified, will
                         create a link to the old ticket in a comment).
   -g ORGANIZATION, --org=ORGANIZATION
                         Name of GitHub Organization (supercedes --account)
+  -s START, --start=START
+                        The trac ticket to start importing at.
+  --authors=FILE        File to load user login names from. Each line is space
+                        separated like: trac-login github-login
+
+
+  We no longer have an option to create a label from Trac milestones,
+  because Github issues now supports milestones natively.
+
 </pre>
 
 <pre class="console">
@@ -52,15 +61,27 @@ comment to add).
 
 This varies depending on which options you enable; more = slower.
 
+The Github API does not allow assigning the owner or reporter. This is
+why we have options for attaching those as labels. It's a kludge, yes.
+
+Note that if your github repository already has some issues, you can't
+possibly preserve correct issue numbers.  You might maybe be able to
+create a new fork to another account, import your issues to the fork,
+rename the original repository, and transfer ownership of the
+fork. Maybe. Untested.
+
+
 h2. Advice
 
 It is highly recommended to create a scratch github repository to run
-your imports to, before doing it to your real project repository.
-This is because it may take you several tries to decide exactly which
-options you want, and verify that it's going to work.
+your imports to, and do trial runs until you're happy, before doing it
+to your real project repository.  This is because it may take you
+several tries to decide exactly which options you want, and verify
+that it's going to work
 
-Also, if you care about preserving issue numbers, your best bet is to
-use the -x option and do some trial runs on a scratch repo before
-trying it on your real repo.  GitHub doesn't allow you to delete
-issues, so you want to get it right in a single run.  (We don't yet
-try to work around numbering gaps due to deleted trac issues.)
+Since there is NO way to delete an issue from github issues, any
+issues you create on your real repository will be there forever.
+
+This is especially important if you care about preserving issue
+numbers; in that case you should also use the -x option to include
+closed issues.

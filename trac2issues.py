@@ -32,6 +32,9 @@ parser.add_option('-g', '--org', dest='organization', help='Name of GitHub Organ
 parser.add_option('-s', '--start', dest='start', help='The trac ticket to start importing at.')
 parser.add_option('--authors', dest='authors_file', default='authors.txt',
                   help='File to load user login names from. Each line is space-separated like: trac-login github-login')
+# parser.add_option('--patches-gist', default=False,
+#                  help='Store attached patches as gists and create a comment linking to the gist.')
+
 (options, args) = parser.parse_args(sys.argv[1:])
 
 
@@ -113,7 +116,8 @@ class ImportTickets:
 
         self._typemap = {
             'defect': 'bug',
-            }
+            # 'enhancement' is same in trac & github... etc.
+        }
 
     def importAllToGithub(self):
         self.ghAuth()
@@ -195,6 +199,7 @@ class ImportTickets:
                 'type': type,
                 'resolution': resolution,
             }
+            # Get all comments.
             cursor2 = self.db.cursor()
             sql = 'select author, time, newvalue from ticket_change where (ticket = %s) and (field = "comment")' % id
             cursor2.execute(sql)
@@ -205,6 +210,36 @@ class ImportTickets:
                     'comment': newvalue
                 }
                 ticket['history'].append(change)
+
+            # TODO: Create gists for attachments, link to them?
+            # # Get all text attachments.
+            # sql = 'select filename, time, description, author from attachment where (id = %s) and (type = "ticket")' % id
+            # cursor2.execute(sql)
+            # for filename, time, descr, author in cursor2:
+            #     unused, ext = os.path.splitext(filename)
+            #     if ext.lower() not in ('.txt', '.diff', '.patch', '.py'):
+            #         print "Skipping attachment %s of unknown type %s" % (filename, ext)
+            #         continue
+            #     # There is probably a proper trac API for doing this...
+            #     # this will do for now.
+            #     attachment_path = os.path.join(self.env.path,
+            #                               'attachments', 'ticket',
+            #                               str(id), filename)
+            #     if not os.path.exists(attachment_path):
+            #         print "OOps, no such file %s" % attachment_path
+            #         continue
+            #     # Make a gist.
+            #     content = file(attachment_path, 'r').read()
+            #     response = self.create_gist(descr, filename, content)
+            #     # Create a comment linking to the gist.
+            #     gist_url = 'x'
+            #     attachment_comment = 'Attachment %s (%s) added by %s' % (filename, gist_url, author)
+            #     change = {'author': author,
+            #               'time': time,
+            #               'comment': attachment_comment,
+            #               }
+            # Sort comments. Ensure time-based order, for attachments too.
+            ticket['history'].sort(key=lambda item: item['time'])
 
             tickets.append(ticket)
 
@@ -433,7 +468,7 @@ class ImportTickets:
 
         base64string = base64.encodestring(
                         '%s:%s' % (self.login, self.password))[:-1]
-        authheader =  "Basic %s" % base64string
+        authheader = "Basic %s" % base64string
         req.add_header("Authorization", authheader)
         # Setting content type explicitly to avoid known bug where github
         # occasionally barfs on content that includes a '%'.
@@ -448,8 +483,8 @@ class ImportTickets:
             response = urlopen(req)
         except urllib2.HTTPError, err:
             if err.code == 403:
-               self.apiLimitExceeded()
-               response = self.makeRequest(url, out) 
+                self.apiLimitExceeded()
+                response = self.makeRequest(url, out)
             elif err.code >= 400:
                 sys.stderr.write(red("HTTP error!\n"))
                 sys.stderr.write(err.read() + '\n')
@@ -481,7 +516,10 @@ class ImportTickets:
 
     def dumpAllIssues(self, issuedir):
         """
-        Useful with the bulk-import-issues beta https://gist.github.com/7f75ced1fa7576412901
+        Useful with the bulk-import-issues beta
+        https://gist.github.com/7f75ced1fa7576412901
+        - NOTE this has been discontinued as of August 2012; there
+        may be a similar feature in future, or not.
         """
         tickets = self._fetchTickets()
         for ticket in tickets:
@@ -514,6 +552,25 @@ class ImportTickets:
             os.makedirs(milestonedir)
         self.dumpAllMilestones(milestonedir)
 
+    def create_gist(self, description, filename, content):
+        """
+        POST a new Gist.
+
+        TODO: OAuth to create them for a user.
+        Currently just anonymous.
+        """
+        gist = {
+            "description": description,
+            "public": True,
+            "files": {
+                filename: {
+                    "content": content,
+                }
+            }
+        }
+        url = 'https://api.github.com/gists/'
+        return self.makeRequest(url, gist)
+
 
 def markdown_from_trac(text):
     # Quick hack to convert some notable trac wiki formatting stuff
@@ -528,6 +585,8 @@ def urlencode_utf8(adict):
     data = urllib.urlencode(dict([k, v.encode('utf-8')]
                                  for k, v in adict.items()))
     return data
+
+
 
 ##Format bold text
 def bold(str):
