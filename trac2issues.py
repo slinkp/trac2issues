@@ -2,8 +2,10 @@
 
 ##Script to convert Trac Tickets to GitHub Issues
 
+import copy
 import re, os, sys, time, math, simplejson
-import string, shutil, urllib2, urllib, pprint, datetime, base64, json, getpass
+import string, shutil, urllib2, urllib, pprint, base64, json, getpass
+
 from datetime import datetime
 from optparse import OptionParser
 from time import sleep
@@ -337,9 +339,6 @@ class ImportTickets:
         print bold('Creating issue from ticket %s' % info['id'])
         out, comments = self.prepareIssue(info)
 
-
-        # Remove bulk-import format stuff that the API can't deal with
-        #ticket.pop('creator')
         for label in out['labels']:
             # Labels must exist before being assigned to tickets.
             self.createLabel(label)
@@ -348,12 +347,17 @@ class ImportTickets:
             # Likewise milestones.
             self.getOrCreateMilestone(out['milestone'])
 
+        # Remove bulk-import format stuff that the API can't deal with
+        issuedata = copy.deepcopy(out)
+        issuedata.pop('creator', None)
+        issuedata.pop('assignee', None)
+
         url = "%s/repos/%s/issues" % (self.github, self.projectPath)
         try:
-            response = self.makeRequest(url, out)
+            response = self.makeRequest(url, issuedata)
         except:
-            #import pdb; pdb.set_trace()
-            return
+            # todo
+            raise
 
         ticket_data = simplejson.load(response)
 
