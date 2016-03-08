@@ -579,6 +579,8 @@ class ImportTickets:
 def markdown_from_trac(text):
     # Quick hack to convert some notable trac wiki formatting stuff
     # to equivalent markdown syntax.
+    if text is None:
+        text = ""
     text = text.replace('{{{', '```')
     text = text.replace('}}}', '```')
     return text
