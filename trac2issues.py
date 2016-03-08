@@ -34,6 +34,8 @@ parser.add_option('-g', '--org', dest='organization', help='Name of GitHub Organ
 parser.add_option('-s', '--start', dest='start', help='The trac ticket to start importing at.')
 parser.add_option('--authors', dest='authors_file', default='authors.txt',
                   help='File to load user login names from. Each line is space-separated like: trac-login github-login')
+parser.add_option('--additional-comments', action="store_true", default=False, dest='additional_comments',
+                  help='Add information about the original author and date as a text header in every comment entry.')
 # parser.add_option('--patches-gist', default=False,
 #                  help='Store attached patches as gists and create a comment linking to the gist.')
 
@@ -109,6 +111,7 @@ class ImportTickets:
         self.reqCount = 0
         self.milestones = {}  # Mapping of title -> id.
         self.contributors = {}
+        self.additional_comments = options.additional_comments
         self._milestones_created = set()
         if options.url:
             self.useURL = "%s/ticket/" % (options.url.rstrip('/'))
@@ -171,11 +174,11 @@ class ImportTickets:
             else:
                 where = ' where id >= %s' % self.start
 
-        sql = "select id, summary, status, description, milestone, component, reporter, owner, type, resolution from ticket %s order by id" % where
+        sql = "select id, summary, status, description, milestone, component, reporter, owner, type, resolution, time from ticket %s order by id" % where
         cursor.execute(sql)
         # iterate through resultset
         tickets = []
-        for id, summary, status, description, milestone, component, reporter, owner, type, resolution in cursor:
+        for id, summary, status, description, milestone, component, reporter, owner, type, resolution, time in cursor:
             if milestone:
                 milestone = milestone.replace(' ', '_')
             if component:
@@ -200,6 +203,7 @@ class ImportTickets:
                 'status': status,
                 'type': type,
                 'resolution': resolution,
+                'time': time,
             }
             # Get all comments.
             cursor2 = self.db.cursor()
@@ -310,6 +314,17 @@ class ImportTickets:
                 comment = {'body': markdown_from_trac(body)}
                 author = i.get('author', 'anonymous').strip()
                 comment['user'] = self.parse_user(author)
+                if self.additional_comments:
+                    comment_header = "[Trac import]\n"
+                    comment_header += "Comment by: %s\n" % comment['user']['login']
+                    try:
+                        comment_header += ("Original date: %s\n" %
+                            datetime.fromtimestamp(i['time']/1000000L).
+                            strftime("%A, %d %B %Y %H:%M"))
+                    except ValueError:
+                        print("timestamp out of range, ignoring");
+                    comment_header += "\n"
+                    comment['body'] = comment_header + comment['body']
                 comments.append(comment)
 
         if self.useURL:
@@ -321,6 +336,19 @@ class ImportTickets:
         # TODO created/closed/modified timestamps.
         if info['status'] == 'closed':
             out['state'] = 'closed'
+
+        if self.additional_comments:
+            comment_header = "[Trac import]\n"
+            if info_has_key('reporter'):
+                comment_header += "Reported by: %s\n" % out['creator']['login']
+            try:
+                comment_header += ("Original date: %s\n" %
+                    datetime.fromtimestamp(info['time']/1000000L).
+                    strftime("%A, %d %B %Y %H:%M"))
+            except ValueError:
+                print("timestamp out of range, ignoring");
+            comment_header += "\n"
+            out['body'] = comment_header + out['body']
 
         return out, comments
 

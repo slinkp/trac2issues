@@ -35,6 +35,9 @@ Options:
                         The trac ticket to start importing at.
   --authors=FILE        File to load user login names from. Each line is space
                         separated like: trac-login github-login
+  --additional-comments
+                        Add information about the original author and date as
+                        a text header in every comment entry.
 
 
   We no longer have an option to create a label from Trac milestones,
